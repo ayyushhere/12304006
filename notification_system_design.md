@@ -75,13 +75,13 @@ I'd suggest going with MongoDB for this. Notifications are basically independent
 ```json
 {
   "_id": "ObjectId",
-  "userId": "String", // Indexed
+  "userId": "String", 
   "type": "String",
   "title": "String",
   "message": "String",
-  "isRead": "Boolean", // Indexed
+  "isRead": "Boolean", 
   "actionUrl": "String",
-  "createdAt": "Date" // Indexed
+  "createdAt": "Date"
 }
 ```
 
@@ -252,3 +252,25 @@ async function sendEmailWorker(taskPayload) {
   }
 }
 ```
+
+---
+
+# Stage 6
+
+### Priority Inbox Implementation
+The Product Manager requested a "Priority Inbox" feature that sorts unread notifications by weight (`Placement` > `Result` > `Event`) and then by recency (newest first), displaying only the top `n`.
+
+I've written a complete, working script for this in the file `priority_inbox.js`. It fetches data directly from the protected API using our JWT token, assigns numeric weights to the types, sorts them according to the rules, and slices the top `n` (defaulting to 10). 
+
+### How to maintain the Top 10 efficiently as new notifications stream in?
+If we use standard array sorting (`Array.sort()`) every time a new notification arrives via our live stream, it takes **O(N log N)** time. If a user has thousands of notifications, completely re-sorting the whole list just to update the top 10 is a huge waste of CPU.
+
+**The Efficient Solution: A Min-Heap (Priority Queue)**
+To maintain the top 10 efficiently, we should use a **Min-Heap** data structure constrained to a maximum size of `k = 10`. 
+
+1. **Initialization:** We push the first 10 notifications into the Min-Heap.
+2. **Streaming Updates:** Whenever a new real-time notification arrives, we look at the "minimum" element at the root of the heap. This element represents the *least important* notification currently in our top 10.
+3. **Replacement:** If the new notification has a higher priority (weight + recency) than that minimum element, we pop the minimum element out and insert the new notification. If the new one is lower priority, we just ignore it for the Priority Inbox.
+
+**Why is this better?**
+Replacing an element in a heap of size 10 takes exactly **O(log 10)** time, which is incredibly small—effectively constant time **O(1)**. This means the Priority Inbox can update instantly without lag, no matter how many thousands of background notifications stream in!
