@@ -157,3 +157,87 @@ Given that notifications are primarily a one-way communication stream (Server ->
 
 * **Client-Side Handling:**
   The frontend colleague can use the native browser `EventSource` API (or a library like `@microsoft/fetch-event-source` if headers are required) to listen for the `NEW_NOTIFICATION` event and update the UI in real-time.
+
+---
+
+# Stage 2
+
+## Persistent Storage Suggestion
+**Choice:** MongoDB (NoSQL)
+
+**Explanation:**
+For a notification system, NoSQL document databases like MongoDB are highly effective for several reasons:
+1. **Flexible Schema:** Notifications often contain varied payload structures (e.g., action URLs, custom metadata) depending on the notification type. A document database easily absorbs these variable fields without needing complex schema migrations.
+2. **High Write Volume:** Notification systems are typically write-heavy. MongoDB provides excellent insert performance and handles large volumes of data natively.
+3. **Horizontal Scalability:** Notifications accumulate very quickly. MongoDB makes it easy to shard the data horizontally across multiple servers based on the `userId`, which isolates data logically and optimizes querying since users only ever fetch their own notifications.
+4. **No Complex Joins:** Notifications are generally standalone events. Once created, they rarely require complex ACID transactions or `JOIN` operations with other tables.
+
+## DB Schema (MongoDB Collection: `notifications`)
+```json
+{
+  "_id": "ObjectId",
+  "userId": "String (Indexed)",
+  "type": "String",
+  "title": "String",
+  "message": "String",
+  "isRead": "Boolean (Indexed)",
+  "actionUrl": "String (Optional)",
+  "createdAt": "Date (Indexed)"
+}
+```
+
+## Potential Problems at Scale & Solutions
+
+### 1. Massive Storage Growth
+**Problem:** As users accumulate hundreds of notifications daily, the database size will explode, leading to expensive storage costs, massive indexes, and slower query times.
+**Solution:** 
+- **TTL (Time-To-Live) Indexes:** Notifications are highly transient. Users rarely care about notifications older than a month. Create a TTL index in MongoDB on the `createdAt` field to automatically delete or archive notifications after 30 to 90 days.
+
+### 2. Expensive "Unread Count" Queries
+**Problem:** Calculating the total number of unread notifications for a user by scanning the database every time they log in or receive an event is an expensive `COUNT()` operation that drains database resources.
+**Solution:**
+- **In-Memory Caching (Redis):** Maintain an integer counter for unread notifications in Redis (e.g., Key: `user:{id}:unread_count`). Increment this counter when a notification is created, and decrement it when one is read.
+
+### 3. Read/Write Bottlenecks
+**Problem:** A sudden surge of system events (e.g., an app-wide announcement) could throttle the database with too many simultaneous writes.
+**Solution:**
+- **Message Queues (Kafka/RabbitMQ):** Decouple the event generation from database insertion. Use a message queue to buffer notification creation requests and process them asynchronously in batches.
+- **Database Sharding:** Shard the MongoDB collection by the `userId` key so that reads and writes are distributed evenly across a cluster of database nodes.
+
+## MongoDB Queries (Based on Stage 1 APIs)
+
+### 1. Fetch Notifications
+Retrieve the most recent notifications for a user (Pagination handled via skip/limit).
+```javascript
+db.notifications.find({ userId: "user-123" })
+  .sort({ createdAt: -1 })
+  .skip(0)
+  .limit(20);
+```
+
+### 2. Mark Notification as Read
+Update a specific notification to `isRead: true`.
+```javascript
+db.notifications.updateOne(
+  { _id: ObjectId("a1b2c3d4..."), userId: "user-123" },
+  { $set: { isRead: true } }
+);
+```
+
+### 3. Mark All Notifications as Read
+Update all unread notifications for a specific user.
+```javascript
+db.notifications.updateMany(
+  { userId: "user-123", isRead: false },
+  { $set: { isRead: true } }
+);
+```
+
+### 4. Delete Notification
+Remove a specific notification entirely.
+```javascript
+db.notifications.deleteOne({
+  _id: ObjectId("a1b2c3d4..."),
+  userId: "user-123"
+});
+```
