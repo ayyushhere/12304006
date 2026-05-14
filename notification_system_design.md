@@ -184,3 +184,66 @@ If we're building a Single Page Application (like React or Vue), we should store
 
 **My Final Recommendation:**
 I'd combine **Strategy 1** and **Strategy 3**. Fetch from the database exactly once on initial login, store it in the frontend's global state, and use Server-Sent Events to push any new updates live. This completely shields the database from page-load spam while providing a seamless real-time experience.
+
+# Stage 5
+
+### Shortcomings of the Current Implementation
+1. **It's synchronous and blocks everything:** Running a basic `for` loop over 50,000 students and waiting for 3 separate network calls (`send_email`, `save_to_db`, `push_to_app`) to finish for each one sequentially will take *forever*. If each loop iteration takes just 100ms, notifying 50k students will take over an hour.
+2. **No fault tolerance or retry logic:** If the `send_email` API times out or crashes on student #25,000, the entire loop breaks. The remaining 25,000 students get nothing, and there's no built-in way to resume from where it stopped.
+3. **High risk of partial failures:** If `send_email` succeeds but `save_to_db` throws a database error, the student gets an email but won't see the notification in their app. The data is now inconsistent.
+
+### What to do about the 200 failed emails?
+Because the current pseudocode has no state tracking, recovering those 200 failed emails is a nightmare. You'd have to parse the server logs, write a custom script to extract those 200 specific student IDs, and run a patched, manual version of the function just for them. 
+
+### How I would redesign this to be reliable and fast
+We need to completely abandon the synchronous loop and use an asynchronous **Message Queue (like Kafka, RabbitMQ, or AWS SQS)** combined with background worker processes.
+
+When the HR clicks "Notify All", the main API should simply publish 50,000 "notification tasks" into a message queue and instantly return a "Notifications are being sent" success message. Then, multiple background workers can pull tasks from the queue concurrently. If a task fails, the queue automatically catches the error and schedules it to retry later.
+
+### Should saving to DB and sending the email happen together?
+**No, they absolutely shouldn't.** 
+They have completely different failure rates and speeds. Database inserts are usually very fast and reliable, while third-party Email APIs (like SendGrid or AWS SES) are notoriously slower, have strict rate limits, and fail frequently due to network timeouts. If we couple them tightly together, an email API outage will prevent us from even saving the notification to our own database. They should be decoupled into separate tasks.
+
+### My Revised Pseudocode
+
+```python
+# 1. Main API Endpoint (Returns instantly to HR)
+function notify_all_async(student_ids: array, message: string):
+    for student_id in student_ids:
+        # Push raw tasks to a message queue instead of doing the heavy lifting here
+        message_queue.publish("process_notification", {
+            "student_id": student_id,
+            "message": message
+        })
+    return "Notifications queued successfully!"
+
+# 2. Background Worker (Scalable, runs asynchronously)
+# We can have 10, 50, or 100 of these running at the same time
+function process_notification_worker(task_payload):
+    student_id = task_payload.student_id
+    message = task_payload.message
+
+    try:
+        # Save to DB first. It's the most critical and fastest step.
+        save_to_db(student_id, message)
+        
+        # Push to app via our Stage 1 SSE stream
+        push_to_app(student_id, message)
+        
+        # Finally, queue the email as a completely separate task because it's slow and prone to failure
+        message_queue.publish("send_email_task", {
+            "student_id": student_id,
+            "message": message
+        })
+    except Exception as e:
+        # If DB or SSE fails, put it back in the queue to retry automatically
+        message_queue.retry_later(task_payload)
+
+# 3. Dedicated Email Worker
+function send_email_worker(task_payload):
+    try:
+        send_email(task_payload.student_id, task_payload.message)
+    except Exception as e:
+        # If the email API is down, it just stays in the queue and retries later! No data lost.
+        message_queue.retry_later(task_payload)
+```
