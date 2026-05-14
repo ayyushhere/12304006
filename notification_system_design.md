@@ -1,243 +1,161 @@
 # Stage 1
 
-## Core Actions for Notification Platform
-To display and manage notifications for logged-in users, the notification platform should support the following core actions:
-1. **Fetch Notifications**: Retrieve a paginated list of notifications for the authenticated user.
-2. **Mark as Read**: Mark a specific notification as read.
-3. **Mark All as Read**: Mark all unread notifications for the user as read.
-4. **Delete Notification**: Remove a specific notification from the user's view.
+Hey! Here's the API contract and structure I came up with for our new notification system. 
 
-## Notification Object Schema
+First off, we need a few core actions:
+- Get all notifications for the logged-in user
+- Mark one notification as read
+- Mark all notifications as read at once
+- Delete a notification
+
+### Notification JSON Structure
+I'm thinking our notification objects should look something like this:
 ```json
 {
-  "id": "a1b2c3d4-5678-90ef-ghij-klmnopqrstuv",
-  "userId": "user-123",
-  "type": "alert",          // "info", "alert", "message", "system"
+  "id": "123e4567-e89b-12d3-a456-426614174000",
+  "userId": "usr_987",
+  "type": "alert", // could be info, alert, message, etc.
   "title": "Payment Failed",
-  "message": "Your recent subscription payment could not be processed.",
+  "message": "Your recent payment didn't go through.",
   "isRead": false,
-  "actionUrl": "/billing/update",
+  "actionUrl": "/billing",
   "createdAt": "2026-05-14T11:00:00Z"
 }
 ```
 
----
+### REST API Endpoints
 
-## REST API Design & Contract
+**1. Fetch Notifications**
+`GET /api/v1/notifications`
+Headers: `Authorization: Bearer <token>`
+We can use query params for pagination: `?page=1&limit=20`
+Response (200):
+```json
+{
+  "unreadCount": 3,
+  "notifications": [ ... ]
+}
+```
 
-### 1. Fetch Notifications
-Retrieves the user's notifications.
+**2. Mark as Read**
+`PATCH /api/v1/notifications/:id/read`
+Headers: `Authorization: Bearer <token>`
+Response (200):
+```json
+{ "message": "Marked as read", "id": "123e4567-e89b-12d3-a456-426614174000" }
+```
 
-* **Endpoint:** `GET /api/v1/notifications`
-* **Headers:**
-  ```json
-  {
-    "Authorization": "Bearer <JWT_TOKEN>",
-    "Accept": "application/json"
-  }
-  ```
-* **Query Parameters:** `?page=1&limit=20&status=unread` (status is optional)
-* **Response (200 OK):**
-  ```json
-  {
-    "success": true,
-    "data": {
-      "unreadCount": 3,
-      "notifications": [
-        {
-          "id": "a1b2c3d4",
-          "type": "alert",
-          "title": "Payment Failed",
-          "message": "Your recent payment failed.",
-          "isRead": false,
-          "createdAt": "2026-05-14T11:00:00Z"
-        }
-      ]
-    },
-    "meta": {
-      "currentPage": 1,
-      "totalPages": 5
-    }
-  }
-  ```
+**3. Mark All as Read**
+`PATCH /api/v1/notifications/read-all`
+Headers: `Authorization: Bearer <token>`
+Response (200):
+```json
+{ "message": "All notifications marked as read" }
+```
 
-### 2. Mark Notification as Read
-Marks a specific notification as read.
+**4. Delete Notification**
+`DELETE /api/v1/notifications/:id`
+Headers: `Authorization: Bearer <token>`
+Response (200):
+```json
+{ "message": "Notification deleted" }
+```
 
-* **Endpoint:** `PATCH /api/v1/notifications/:id/read`
-* **Headers:**
-  ```json
-  {
-    "Authorization": "Bearer <JWT_TOKEN>",
-    "Content-Type": "application/json"
-  }
-  ```
-* **Request Body:** None required.
-* **Response (200 OK):**
-  ```json
-  {
-    "success": true,
-    "message": "Notification marked as read successfully.",
-    "data": {
-      "id": "a1b2c3d4",
-      "isRead": true
-    }
-  }
-  ```
-
-### 3. Mark All Notifications as Read
-Marks every unread notification belonging to the user as read.
-
-* **Endpoint:** `PATCH /api/v1/notifications/read-all`
-* **Headers:**
-  ```json
-  {
-    "Authorization": "Bearer <JWT_TOKEN>",
-    "Content-Type": "application/json"
-  }
-  ```
-* **Request Body:** None required.
-* **Response (200 OK):**
-  ```json
-  {
-    "success": true,
-    "message": "All notifications marked as read."
-  }
-  ```
-
-### 4. Delete Notification
-Removes a notification entirely.
-
-* **Endpoint:** `DELETE /api/v1/notifications/:id`
-* **Headers:**
-  ```json
-  {
-    "Authorization": "Bearer <JWT_TOKEN>"
-  }
-  ```
-* **Response (200 OK):**
-  ```json
-  {
-    "success": true,
-    "message": "Notification deleted successfully."
-  }
-  ```
-
----
-
-## Mechanism for Real-Time Notifications
-
-To push real-time notifications to the front-end client without requiring the client to constantly poll the REST API, we will implement **Server-Sent Events (SSE)** or **WebSockets**. 
-
-Given that notifications are primarily a one-way communication stream (Server -> Client), **Server-Sent Events (SSE)** is the most lightweight and HTTP-friendly approach.
-
-### Server-Sent Events (SSE) Design
-
-* **Endpoint:** `GET /api/v1/notifications/stream`
-* **Headers:**
-  ```json
-  {
-    "Authorization": "Bearer <JWT_TOKEN>",
-    "Accept": "text/event-stream"
-  }
-  ```
-* **Behavior:**
-  1. The client establishes a persistent HTTP connection to the `/stream` endpoint.
-  2. The backend maintains this open connection.
-  3. Whenever a system event generates a notification for the user, the server pushes an event over this open stream.
-
-* **Stream Event Payload Example:**
-  ```text
-  event: NEW_NOTIFICATION
-  data: {"id": "123", "title": "New Message", "message": "You have a new message from Support.", "isRead": false, "createdAt": "2026-05-14T11:05:00Z"}
-  
-  event: UNREAD_COUNT_UPDATE
-  data: {"unreadCount": 4}
-  ```
-
-* **Client-Side Handling:**
-  The frontend colleague can use the native browser `EventSource` API (or a library like `@microsoft/fetch-event-source` if headers are required) to listen for the `NEW_NOTIFICATION` event and update the UI in real-time.
+### Real-Time Mechanism
+To actually show notifications in real-time when the user is logged in, we shouldn't rely on the frontend constantly polling the API. Instead, we should use Server-Sent Events (SSE). It's way lighter than WebSockets since the server is just pushing updates one-way to the client. The frontend can just listen to a `GET /api/v1/notifications/stream` endpoint using the browser's built-in `EventSource` and update the UI whenever a new notification event comes in.
 
 ---
 
 # Stage 2
 
-## Persistent Storage Suggestion
-**Choice:** MongoDB (NoSQL)
+### Database Choice
+I'd suggest going with MongoDB for this. Notifications are basically independent documents. They don't really need complex SQL joins, and the payload (like action URLs or extra data) can change depending on the notification type. Mongo's flexible schema handles that easily. Plus, it's super easy to shard by `userId` later on when the data gets huge, which gives us great write performance.
 
-**Explanation:**
-For a notification system, NoSQL document databases like MongoDB are highly effective for several reasons:
-1. **Flexible Schema:** Notifications often contain varied payload structures (e.g., action URLs, custom metadata) depending on the notification type. A document database easily absorbs these variable fields without needing complex schema migrations.
-2. **High Write Volume:** Notification systems are typically write-heavy. MongoDB provides excellent insert performance and handles large volumes of data natively.
-3. **Horizontal Scalability:** Notifications accumulate very quickly. MongoDB makes it easy to shard the data horizontally across multiple servers based on the `userId`, which isolates data logically and optimizes querying since users only ever fetch their own notifications.
-4. **No Complex Joins:** Notifications are generally standalone events. Once created, they rarely require complex ACID transactions or `JOIN` operations with other tables.
-
-## DB Schema (MongoDB Collection: `notifications`)
+### Schema (MongoDB)
 ```json
 {
   "_id": "ObjectId",
-  "userId": "String (Indexed)",
+  "userId": "String", // Indexed
   "type": "String",
   "title": "String",
   "message": "String",
-  "isRead": "Boolean (Indexed)",
-  "actionUrl": "String (Optional)",
-  "createdAt": "Date (Indexed)"
+  "isRead": "Boolean", // Indexed
+  "actionUrl": "String",
+  "createdAt": "Date" // Indexed
 }
 ```
 
-## Potential Problems at Scale & Solutions
+### Scaling Issues & How to Fix Them
+1. **The DB gets way too big:** Users get a ton of notifications and never delete them, eating up disk space. 
+   *Fix:* We can add a TTL (Time-To-Live) index on the `createdAt` field in Mongo. Basically tells the DB to auto-delete notifications that are older than like 30 or 60 days.
+2. **Counting unreads is slow:** Doing a `COUNT()` query on millions of rows every time a user logs in will kill the database.
+   *Fix:* We should cache the unread count in Redis (e.g., `user:123:unread_count`). We just increment it when a new notification fires, and decrement when they read it.
 
-### 1. Massive Storage Growth
-**Problem:** As users accumulate hundreds of notifications daily, the database size will explode, leading to expensive storage costs, massive indexes, and slower query times.
-**Solution:** 
-- **TTL (Time-To-Live) Indexes:** Notifications are highly transient. Users rarely care about notifications older than a month. Create a TTL index in MongoDB on the `createdAt` field to automatically delete or archive notifications after 30 to 90 days.
+### Some Basic Queries (MongoDB)
 
-### 2. Expensive "Unread Count" Queries
-**Problem:** Calculating the total number of unread notifications for a user by scanning the database every time they log in or receive an event is an expensive `COUNT()` operation that drains database resources.
-**Solution:**
-- **In-Memory Caching (Redis):** Maintain an integer counter for unread notifications in Redis (e.g., Key: `user:{id}:unread_count`). Increment this counter when a notification is created, and decrement it when one is read.
-
-### 3. Read/Write Bottlenecks
-**Problem:** A sudden surge of system events (e.g., an app-wide announcement) could throttle the database with too many simultaneous writes.
-**Solution:**
-- **Message Queues (Kafka/RabbitMQ):** Decouple the event generation from database insertion. Use a message queue to buffer notification creation requests and process them asynchronously in batches.
-- **Database Sharding:** Shard the MongoDB collection by the `userId` key so that reads and writes are distributed evenly across a cluster of database nodes.
-
-## MongoDB Queries (Based on Stage 1 APIs)
-
-### 1. Fetch Notifications
-Retrieve the most recent notifications for a user (Pagination handled via skip/limit).
+Fetch a user's latest 20 notifications:
 ```javascript
-db.notifications.find({ userId: "user-123" })
-  .sort({ createdAt: -1 })
-  .skip(0)
-  .limit(20);
+db.notifications.find({ userId: "usr_987" }).sort({ createdAt: -1 }).limit(20);
 ```
 
-### 2. Mark Notification as Read
-Update a specific notification to `isRead: true`.
+Mark one as read:
 ```javascript
 db.notifications.updateOne(
-  { _id: ObjectId("a1b2c3d4..."), userId: "user-123" },
+  { _id: ObjectId("..."), userId: "usr_987" },
   { $set: { isRead: true } }
 );
 ```
 
-### 3. Mark All Notifications as Read
-Update all unread notifications for a specific user.
+Mark all as read:
 ```javascript
 db.notifications.updateMany(
-  { userId: "user-123", isRead: false },
+  { userId: "usr_987", isRead: false },
   { $set: { isRead: true } }
 );
 ```
 
-### 4. Delete Notification
-Remove a specific notification entirely.
+Delete:
 ```javascript
-db.notifications.deleteOne({
-  _id: ObjectId("a1b2c3d4..."),
-  userId: "user-123"
-});
+db.notifications.deleteOne({ _id: ObjectId("..."), userId: "usr_987" });
+```
+
+---
+
+# Stage 3
+
+### The Slow Query Issue
+The earlier developer wrote this query:
+```sql
+SELECT * FROM notifications 
+WHERE studentID = 1042 AND isRead = false 
+ORDER BY createdAt ASC;
+```
+
+**Is it accurate?** 
+Technically yes, it fetches all unread notifications for that student. However, usually you want to show the newest notifications first, so it really should be `ORDER BY createdAt DESC` instead of `ASC`.
+
+**Why is it so slow?**
+Because the table has 5 million rows and there's no proper index. The database has to scan through tons of rows (a full table scan) just to find the ones belonging to student 1042. Sorting them afterwards makes it even worse.
+
+**What I would change:**
+1. I'd add a composite index on `(studentID, isRead, createdAt)`. This way the DB jumps straight to that student's unread notifications and they are already sorted.
+2. I'd change it to `ORDER BY createdAt DESC`.
+3. I'd avoid `SELECT *` and only select the columns we actually need to render the UI (like `id, title, message, createdAt`).
+4. I'd probably add a `LIMIT` clause so we don't fetch thousands of notifications at once if they've been ignoring them.
+
+**Computation Cost:**
+Right now, it's roughly O(N) where N is 5,000,000 (a full table scan). By adding the composite index, it drops to basically O(log N) to find the index node, plus O(K) where K is just the few unread notifications for that student. It would run nearly instantly.
+
+### Adding indexes on EVERY column?
+**Is it effective?** Definitely not.
+**Why:** While indexes speed up reads, they drastically slow down writes (`INSERT`, `UPDATE`, `DELETE`). Every time a notification is created or marked as read, the database would have to update every single index. In a write-heavy system like notifications, over-indexing will destroy the database's performance and eat up a massive amount of disk space and memory for no reason. We should only index columns we frequently query or filter by.
+
+### Placement Notification Query
+To find all students who got a placement notification in the last 7 days:
+
+```sql
+SELECT DISTINCT studentID 
+FROM notifications 
+WHERE notificationType = 'Placement' 
+  AND createdAt >= NOW() - INTERVAL 7 DAY;
 ```
