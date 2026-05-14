@@ -2,7 +2,7 @@ import React, { useContext } from 'react';
 import { Card, CardContent, Typography, Box, Chip, IconButton, Badge } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import { NotificationContext } from '../context/NotificationContext';
-import { CheckCircleOutline, Work, School, Event } from '@mui/icons-material';
+import { CheckCircleOutlined, Work, School, Event } from '@mui/icons-material';
 
 const NotificationCard = ({ notification }) => {
   const theme = useTheme();
@@ -74,7 +74,7 @@ const NotificationCard = ({ notification }) => {
 
         {isRead && (
           <Box display="flex" alignItems="center" gap={0.5} mt={2}>
-            <CheckCircleOutline sx={{ fontSize: 16, color: 'text.secondary' }} />
+            <CheckCircleOutlined sx={{ fontSize: 16, color: 'text.secondary' }} />
             <Typography variant="caption" color="text.secondary">
               Viewed
             </Typography>
