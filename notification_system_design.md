@@ -206,44 +206,49 @@ They have completely different failure rates and speeds. Database inserts are us
 
 ### My Revised Pseudocode
 
-```python
-# 1. Main API Endpoint (Returns instantly to HR)
-function notify_all_async(student_ids: array, message: string):
-    for student_id in student_ids:
-        # Push raw tasks to a message queue instead of doing the heavy lifting here
-        message_queue.publish("process_notification", {
-            "student_id": student_id,
-            "message": message
-        })
-    return "Notifications queued successfully!"
+```javascript
+// 1. Main API Endpoint (Returns instantly to HR)
+async function notifyAllAsync(studentIds, message) {
+  for (const studentId of studentIds) {
+    // Push raw tasks to a message queue instead of doing the heavy lifting here
+    await messageQueue.publish("process_notification", {
+      studentId: studentId,
+      message: message
+    });
+  }
+  return "Notifications queued successfully!";
+}
 
-# 2. Background Worker (Scalable, runs asynchronously)
-# We can have 10, 50, or 100 of these running at the same time
-function process_notification_worker(task_payload):
-    student_id = task_payload.student_id
-    message = task_payload.message
+// 2. Background Worker (Scalable, runs asynchronously)
+// We can have 10, 50, or 100 of these running at the same time
+async function processNotificationWorker(taskPayload) {
+  const { studentId, message } = taskPayload;
 
-    try:
-        # Save to DB first. It's the most critical and fastest step.
-        save_to_db(student_id, message)
-        
-        # Push to app via our Stage 1 SSE stream
-        push_to_app(student_id, message)
-        
-        # Finally, queue the email as a completely separate task because it's slow and prone to failure
-        message_queue.publish("send_email_task", {
-            "student_id": student_id,
-            "message": message
-        })
-    except Exception as e:
-        # If DB or SSE fails, put it back in the queue to retry automatically
-        message_queue.retry_later(task_payload)
+  try {
+    // Save to DB first. It's the most critical and fastest step.
+    await saveToDb(studentId, message);
+    
+    // Push to app via our Stage 1 SSE stream
+    await pushToApp(studentId, message);
+    
+    // Finally, queue the email as a completely separate task because it's slow and prone to failure
+    await messageQueue.publish("send_email_task", {
+      studentId: studentId,
+      message: message
+    });
+  } catch (error) {
+    // If DB or SSE fails, put it back in the queue to retry automatically
+    await messageQueue.retryLater(taskPayload);
+  }
+}
 
-# 3. Dedicated Email Worker
-function send_email_worker(task_payload):
-    try:
-        send_email(task_payload.student_id, task_payload.message)
-    except Exception as e:
-        # If the email API is down, it just stays in the queue and retries later! No data lost.
-        message_queue.retry_later(task_payload)
+// 3. Dedicated Email Worker
+async function sendEmailWorker(taskPayload) {
+  try {
+    await sendEmail(taskPayload.studentId, taskPayload.message);
+  } catch (error) {
+    // If the email API is down, it just stays in the queue and retries later! No data lost.
+    await messageQueue.retryLater(taskPayload);
+  }
+}
 ```
