@@ -159,3 +159,28 @@ FROM notifications
 WHERE notificationType = 'Placement' 
   AND createdAt >= NOW() - INTERVAL 7 DAY;
 ```
+
+
+# Stage 4
+
+### The Problem: Overwhelming the DB on Page Loads
+If the frontend is making an API call to fetch notifications every single time a student loads a page, it's going to completely crush the database with redundant queries, especially with 50,000 active students. 
+
+### How I'd Improve Performance & Solutions
+
+Here are three strategies I'd use to fix this, along with their tradeoffs:
+
+**1. Move to a Push Model (Server-Sent Events)**
+Instead of the frontend "pulling" data on every page load, we should just fetch the notifications exactly once when the user first logs in. After that, the client maintains a persistent connection (like the SSE we designed in Stage 1) to listen for new notifications. If they navigate around the app, the frontend just holds the data in memory.
+* **Tradeoffs:** Maintaining 50,000 open persistent connections requires a lot of server memory and can be tricky to load balance. We might need to deploy a dedicated microservice just to handle the SSE/WebSocket connections so our main API doesn't crash.
+
+**2. Database Caching (Redis)**
+If we must fetch on page load (e.g., if it's a traditional multi-page website and not an SPA), we shouldn't hit the main database. We can cache the student's recent notifications in Redis. When a page loads, the API grabs it from Redis, which is lightning fast since it's stored in RAM.
+* **Tradeoffs:** Redis RAM is much more expensive than standard disk storage. Also, cache invalidation is notoriously difficult: every time a new notification is created or a student marks one as read, we have to remember to immediately update the Redis cache so they don't see stale data.
+
+**3. Client-Side State & Local Storage**
+If we're building a Single Page Application (like React or Vue), we should store the fetched notifications in a global state manager (like Redux or Context API). We can also save them to the browser's `localStorage`. This way, as they click through pages, the app doesn't need to ask the server for data at all.
+* **Tradeoffs:** It doesn't solve the problem if the user constantly hard-refreshes the page. Also, if they read a notification on their phone, their laptop's `localStorage` will still think it's unread until it does a background sync, causing a briefly confusing user experience.
+
+**My Final Recommendation:**
+I'd combine **Strategy 1** and **Strategy 3**. Fetch from the database exactly once on initial login, store it in the frontend's global state, and use Server-Sent Events to push any new updates live. This completely shields the database from page-load spam while providing a seamless real-time experience.
